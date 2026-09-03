@@ -1,12 +1,12 @@
-name: Auto Unzip to Root
+name: Auto Unzip and Inject Workflow
 
 on:
   push:
     paths:
-      - '*.zip' # 최상위 경로에 zip 파일이 push 되었을 때만 실행
+      - '*.zip' # 최상위 경로에 zip 파일이 push 되었을 때 실행
 
 permissions:
-  contents: write # 압축 해제된 파일들을 다시 푸시하기 위해 쓰기 권한 허용
+  contents: write # 파일 변경 및 푸시를 위한 권한
 
 jobs:
   unzip-and-push:
@@ -19,10 +19,10 @@ jobs:
         with:
           persist-credentials: true
 
-      # 2. 최상위에 있는 zip 파일 찾아서 압축 해제 후 zip 제거
-      - name: Unzip Files to Root
+      # 2. ZIP 내부 구조를 확인하고 적절한 위치에 워크플로우 주입 후 압축 해제
+      - name: Process ZIP and Inject Workflow
         run: |
-          # 업로드된 첫 번째 zip 파일을 찾음
+          # 업로드된 첫 번째 zip 파일 찾기
           ZIP_FILE=$(ls *.zip | head -n 1)
           
           if [ -z "$ZIP_FILE" ]; then
@@ -32,23 +32,51 @@ jobs:
           
           echo "Found zip file: $ZIP_FILE"
           
-          # 최상위 루트에 압축 해제 (-o: 강제 덮어쓰기, -q: 조용히)
-          unzip -o -q "$ZIP_FILE" -d ./
+          # 임시 작업 디렉토리 생성
+          mkdir -p ./tmp_unzip
           
-          # 압축 해제 완료 후 원본 zip 파일 삭제 (저장소 정리)
+          # 1차로 임시 폴더에 압축 해제
+          unzip -o -q "$ZIP_FILE" -d ./tmp_unzip
+          
+          # ZIP 내부에서 .github/workflows 폴더 위치 찾기 (중첩 구조 대비)
+          TARGET_DIR=$(find ./tmp_unzip -type d -path "*/.github/workflows" | head -n 1)
+          
+          if [ -n "$TARGET_DIR" ]; then
+            echo "Target workflow directory found inside ZIP: $TARGET_DIR"
+            
+            # 주입할 새로운 워크플로우 파일 생성 (예시: 샘플 CI 워크플로우)
+            # 필요에 따라 이 내부 파일의 내용을 원하시는 스크립트로 변경하시면 됩니다.
+            cat << 'EOF' > "$TARGET_DIR/inserted-ci.yml"
+          name: Inserted Action
+          on: [push]
+          jobs:
+            test:
+              runs-on: ubuntu-latest
+              steps:
+                - run: echo "This workflow was injected from the zip file!"
+          EOF
+            echo "Successfully injected inserted-ci.yml into ZIP structure."
+          else
+            echo "Warning: .github/workflows directory not found inside the ZIP structure."
+          fi
+          
+          # 임시 폴더의 내용물들을 저장소 최상위(Root)로 이동/덮어쓰기
+          cp -r ./tmp_unzip/* ./
+          
+          # 정리 작업: 임시 폴더 및 원본 ZIP 파일 삭제
+          rm -rf ./tmp_unzip
           rm "$ZIP_FILE"
 
-      # 3. 변경된 파일들을 저장소에 다시 커밋 및 푸시
+      # 3. 변경사항 커밋 및 푸시
       - name: Commit and Push Changes
         run: |
           git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.email "41898282+github-actions[bot]@://github.com"
           
           git add .
           
-          # 변경사항이 있을 때만 커밋 및 푸시 진행
           if ! git diff --staged --quiet; then
-            git commit -m "chore: 자동으로 업로드된 ZIP 파일 압축 해제 완료"
+            git commit -m "chore: ZIP 압축 해제 및 .github/workflows 파일 주입 완료"
             git push
           else
             echo "No changes to commit"

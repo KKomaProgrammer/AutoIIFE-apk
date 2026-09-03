@@ -1,0 +1,16 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.kkomaprogrammer.iiferunner'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.kkomaprogrammer.iiferunner"
+        minSdk 26
+        targetSdk 33
+        versionCode 1
+        versionName "1.0"
+    }
+}

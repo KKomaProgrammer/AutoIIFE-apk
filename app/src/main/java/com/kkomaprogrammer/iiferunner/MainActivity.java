@@ -5,7 +5,6 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -45,13 +44,17 @@ public class MainActivity extends Activity {
         root.addView(title, matchWrap());
 
         TextView hint = new TextView(this);
-        hint.setText("대상 URL과 IIFE를 저장한 뒤 실행하세요. 실행 중에는 알림이 유지되고 화면이 꺼져도 CPU wake-lock을 잡습니다.");
+        hint.setText("대상 URL/패턴을 한 줄에 하나씩 입력하세요. * 와일드카드를 사용할 수 있습니다. 여러 URL은 각각 별도 WebView로 동시에 실행됩니다.");
         root.addView(hint, matchWrap());
 
         urlInput = new EditText(this);
-        urlInput.setHint("https://example.com/");
-        urlInput.setSingleLine(true);
-        urlInput.setText(p.getString("url", "https://example.com/"));
+        urlInput.setHint("https://playentry.org/*\nhttps://example.com/page/*\nhttps://*.example.org/*");
+        urlInput.setSingleLine(false);
+        urlInput.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        urlInput.setMinLines(4);
+        String savedPatterns = p.getString("urlPatterns", null);
+        if (savedPatterns == null) savedPatterns = p.getString("url", "https://example.com/*");
+        urlInput.setText(savedPatterns);
         root.addView(urlInput, matchWrap());
 
         codeInput = new EditText(this);
@@ -77,7 +80,7 @@ public class MainActivity extends Activity {
         root.addView(stop, matchWrap());
 
         Button login = new Button(this);
-        login.setText("로그인/페이지 열기 (쿠키 공유)");
+        login.setText("첫 URL 로그인/페이지 열기 (쿠키 공유)");
         login.setOnClickListener(v -> openLoginWebView());
         root.addView(login, matchWrap());
 
@@ -96,14 +99,14 @@ public class MainActivity extends Activity {
     }
 
     private void startRunner() {
-        String url = urlInput.getText().toString().trim();
+        String patterns = urlInput.getText().toString().trim();
         String code = codeInput.getText().toString();
-        if (url.isEmpty() || code.trim().isEmpty()) {
-            Toast.makeText(this, "URL과 IIFE 코드를 입력하세요.", Toast.LENGTH_SHORT).show();
+        if (RunnerService.parsePatterns(patterns).isEmpty() || code.trim().isEmpty()) {
+            Toast.makeText(this, "URL/패턴을 1개 이상 입력하고 IIFE 코드를 입력하세요.", Toast.LENGTH_SHORT).show();
             return;
         }
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putString("url", url)
+                .putString("urlPatterns", patterns)
                 .putString("code", code)
                 .putBoolean("autostart", autoStart.isChecked())
                 .apply();
@@ -111,18 +114,29 @@ public class MainActivity extends Activity {
         Intent i = new Intent(this, RunnerService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i);
         else startService(i);
-        Toast.makeText(this, "백그라운드 실행을 시작했습니다.", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, RunnerService.parsePatterns(patterns).size() + "개 URL/패턴 실행을 시작했습니다.", Toast.LENGTH_SHORT).show();
     }
 
     private void openLoginWebView() {
         if (loginWebView != null) return;
+        java.util.List<String> patterns = RunnerService.parsePatterns(urlInput.getText().toString());
+        if (patterns.isEmpty()) {
+            Toast.makeText(this, "먼저 URL/패턴을 입력하세요.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String startUrl = RunnerService.patternToStartUrl(patterns.get(0));
+        if (startUrl == null) {
+            Toast.makeText(this, "첫 URL 패턴에서 열 수 있는 주소를 만들 수 없습니다.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         loginWebView = new WebView(this);
         loginWebView.getSettings().setJavaScriptEnabled(true);
         loginWebView.getSettings().setDomStorageEnabled(true);
         loginWebView.setWebViewClient(new WebViewClient());
         loginWebView.setWebChromeClient(new WebChromeClient());
         addContentView(loginWebView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        loginWebView.loadUrl(urlInput.getText().toString().trim());
+        loginWebView.loadUrl(startUrl);
     }
 
     @Override
